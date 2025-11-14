@@ -79,8 +79,8 @@ function initVideoAndFacemesh() {
   video = createCapture(VIDEO, () => {
     elStatusBar.textContent = "Webcam ready. Loading facemesh...";
   });
-  video.size(640, 480);
-  video.hide();
+  video.size(320, 240);
+  video.parent("canvas-container");
 
   facemeshModel = ml5.facemesh(video, () => {
     elCaptureStatus.textContent = "Live tracking";
@@ -154,7 +154,7 @@ function stabilizePoints(points) {
   const out = [];
   for (const p of points) {
     let x = (p.x - cx) * scale;
-    let y = (p.y - cy) * scale;
+    let y = (cy - p.y) * scale;
     const z = (p.z - cz) * scale;
 
     const rx = x * ca - y * sa;
@@ -245,14 +245,6 @@ function renderWavetableViewPlaceholder() {
   noStroke();
   fill(40, 60, 120);
   plane(1.4, 0.4);
-  pop();
-
-  push();
-  resetMatrix();
-  translate(-width / 2 + 20, -height / 2 + 20, 0);
-  fill(230);
-  textSize(14);
-  text("Wavetable 3D view coming next", 0, 0);
   pop();
 }
 
