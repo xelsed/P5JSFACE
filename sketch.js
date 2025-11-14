@@ -11,6 +11,17 @@ let rawSlices = [];
 let sliceCollisionCounts = [];
 let totalCollisions = 0;
 let sliceBoundsY = { min: 0, max: 0 };
+let mouthSliceIndex = null;
+
+const WAVETABLE_SIZE = 512;
+let wavetables = [];
+let timeAxisMode = "x"; // "x" = left→right, "y" = top→bottom
+let audioCtx = null;
+let masterGain = null;
+let semitoneOffset = 0;
+let baseFrequency = 220; // A3
+let adsr = { attack: 0.02, decay: 0.12, sustain: 0.7, release: 0.2 };
+let playingSlices = new Set();
 
 let viewMode = "mesh"; // "mesh" | "wavetable" (wavetable view to be added)
 
@@ -19,6 +30,7 @@ let elCaptureStatus, elMeshStatus, elViewStatus;
 let elSliceCount, elCollisionTotal, elCollisionList;
 let elStatusBar;
 let elSmoothingMethod, elOpenAIKey, elAIPrompt, elAIButton, elAIStatus;
+let elPitchDisplay, elADSRAtk, elADSRDec, elADSRSus, elADSRRel;
 
 function setup() {
   const container = document.getElementById("canvas-container");
@@ -80,7 +92,7 @@ function initVideoAndFacemesh() {
     elStatusBar.textContent = "Webcam ready. Loading facemesh...";
   });
   video.size(320, 240);
-  video.parent("canvas-container");
+  video.hide();
 
   facemeshModel = ml5.facemesh(video, () => {
     elCaptureStatus.textContent = "Live tracking";
@@ -154,7 +166,7 @@ function stabilizePoints(points) {
   const out = [];
   for (const p of points) {
     let x = (p.x - cx) * scale;
-    let y = (cy - p.y) * scale;
+    let y = (p.y - cy) * scale;
     const z = (p.z - cz) * scale;
 
     const rx = x * ca - y * sa;
@@ -175,8 +187,9 @@ function draw() {
   ambientLight(40);
 
   push();
-  // Flip Y for more intuitive orientation (positive up)
-  scale(200, -200, 200);
+  // Uniform scale; tie to video width so mesh and video are similar physical size
+  const baseScale = video && video.width ? video.width * 0.5 : 200;
+  scale(baseScale, baseScale, baseScale);
 
   if (viewMode === "mesh") {
     renderMeshView();
@@ -185,13 +198,24 @@ function draw() {
   }
 
   pop();
+
+  // Draw small video preview in top-left corner as a 2D overlay
+  if (video) {
+    push();
+    resetMatrix();
+    translate(-width / 2 + 90, -height / 2 + 70, 0);
+    noStroke();
+    texture(video);
+    plane(video.width, video.height);
+    pop();
+  }
 }
 
 function renderMeshView() {
   // Live tracking as ghosted background
   if (stabilizedLivePoints && stabilizedLivePoints.length > 0) {
-    stroke(80, 120, 255, 80);
-    strokeWeight(0.01);
+    stroke(255, 240, 0, 220);
+    strokeWeight(0.012);
     noFill();
     beginShape(POINTS);
     for (const p of stabilizedLivePoints) {
@@ -228,9 +252,17 @@ function drawSliceLines() {
     const collisions = sliceCollisionCounts[i] || 0;
     const hasCollision = collisions > 0;
 
-    const col = hasCollision ? [255, 80, 80] : [80, 255, 140];
+    let col;
+    let weight = 0.004;
+    if (mouthSliceIndex !== null && i === mouthSliceIndex) {
+      // Highlight the mouth-aligned slice
+      col = [80, 180, 255];
+      weight = 0.007;
+    } else {
+      col = hasCollision ? [255, 80, 80] : [80, 255, 140];
+    }
     stroke(col[0], col[1], col[2]);
-    strokeWeight(0.004);
+    strokeWeight(weight);
 
     const extent = 1.1; // extend across face
     line(-extent, y, 0, extent, y, 0);
@@ -269,18 +301,29 @@ function recomputeSlices() {
     return;
   }
 
-  sliceBoundsY.min = minY;
-  sliceBoundsY.max = maxY;
+  const h = maxY - minY;
+  const sliceH = h / sliceCount;
+
+  let sliceMinY = minY;
+  const upperLipIndex = 13;
+  const lowerLipIndex = 14;
+  mouthSliceIndex = null;
+  if (frozenMesh[upperLipIndex] && frozenMesh[lowerLipIndex]) {
+    const mouthY = (frozenMesh[upperLipIndex].y + frozenMesh[lowerLipIndex].y) * 0.5;
+    const anchorIndex = Math.floor(sliceCount / 2);
+    sliceMinY = mouthY - sliceH * (anchorIndex + 0.5);
+    mouthSliceIndex = anchorIndex;
+  }
+
+  sliceBoundsY.min = sliceMinY;
+  sliceBoundsY.max = sliceMinY + h;
 
   for (let i = 0; i < sliceCount; i++) {
     rawSlices[i] = [];
   }
 
-  const h = maxY - minY;
-  const sliceH = h / sliceCount;
-
   for (const p of frozenMesh) {
-    const idx = Math.max(0, Math.min(sliceCount - 1, Math.floor((p.y - minY) / sliceH)));
+    const idx = Math.max(0, Math.min(sliceCount - 1, Math.floor((p.y - sliceMinY) / sliceH)));
     rawSlices[idx].push({ x: p.x, z: p.z });
   }
 
