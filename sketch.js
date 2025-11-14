@@ -72,7 +72,15 @@ function initUIRefs() {
   elAIButton = document.getElementById("ai-process-btn");
   elAIStatus = document.getElementById("ai-status");
 
+  elPitchDisplay = document.getElementById("pitch-display");
+  elADSRAtk = document.getElementById("adsr-attack");
+  elADSRDec = document.getElementById("adsr-decay");
+  elADSRSus = document.getElementById("adsr-sustain");
+  elADSRRel = document.getElementById("adsr-release");
+
   elSliceCount.textContent = String(sliceCount);
+  updatePitchUI();
+  updateADSRUI();
 }
 
 function initAIPromptDefault() {
@@ -270,14 +278,32 @@ function drawSliceLines() {
 }
 
 function renderWavetableViewPlaceholder() {
-  // Placeholder: show a simple text plane until wavetable 3D view is implemented.
-  push();
-  rotateX(-Math.PI / 4);
-  rotateY(0.3);
-  noStroke();
-  fill(40, 60, 120);
-  plane(1.4, 0.4);
-  pop();
+  if (!wavetables || wavetables.length === 0) return;
+
+  const sliceSpacing = 0.18;
+  const ampScale = 0.4;
+
+  for (let i = 0; i < wavetables.length; i++) {
+    const wav = wavetables[i];
+    if (!wav) continue;
+
+    const y = (i - (wavetables.length - 1) / 2) * sliceSpacing;
+    const isPlaying = playingSlices.has(i);
+
+    const col = isPlaying ? [120, 255, 180] : [180, 200, 255];
+    stroke(col[0], col[1], col[2]);
+    strokeWeight(isPlaying ? 0.012 : 0.006);
+    noFill();
+
+    beginShape();
+    for (let j = 0; j < wav.length; j++) {
+      const t = j / (wav.length - 1);
+      const x = (t - 0.5) * 1.6;
+      const z = wav[j] * ampScale;
+      vertex(x, y, z);
+    }
+    endShape();
+  }
 }
 
 // Slice frozenMesh horizontally and compute per-slice collision counts.
@@ -324,7 +350,7 @@ function recomputeSlices() {
 
   for (const p of frozenMesh) {
     const idx = Math.max(0, Math.min(sliceCount - 1, Math.floor((p.y - sliceMinY) / sliceH)));
-    rawSlices[idx].push({ x: p.x, z: p.z });
+    rawSlices[idx].push({ x: p.x, y: p.y, z: p.z });
   }
 
   for (let i = 0; i < sliceCount; i++) {
@@ -333,6 +359,7 @@ function recomputeSlices() {
     totalCollisions += sliceCollisionCounts[i];
   }
 
+  generateWavetables();
   updateCollisionUI();
 }
 
@@ -377,6 +404,88 @@ function estimateCollisionsForSlice(points) {
   return collisions;
 }
 
+function generateWavetables() {
+  wavetables = [];
+  if (!rawSlices || rawSlices.length === 0) return;
+
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (let i = 0; i < rawSlices.length; i++) {
+    const pts = rawSlices[i];
+    if (!pts) continue;
+    for (const p of pts) {
+      if (p.z < minZ) minZ = p.z;
+      if (p.z > maxZ) maxZ = p.z;
+    }
+  }
+
+  if (!isFinite(minZ) || !isFinite(maxZ) || minZ === maxZ) {
+    return;
+  }
+
+  for (let i = 0; i < rawSlices.length; i++) {
+    wavetables[i] = generateWavetableForSlice(rawSlices[i] || [], minZ, maxZ);
+  }
+}
+
+function generateWavetableForSlice(points, minZ, maxZ) {
+  const out = new Float32Array(WAVETABLE_SIZE);
+  if (!points || points.length === 0) {
+    return out;
+  }
+
+  const axisVals = [];
+  const amps = [];
+  const midZ = (minZ + maxZ) * 0.5;
+  const rangeZ = (maxZ - minZ) * 0.5 || 1;
+
+  for (const p of points) {
+    const axis = timeAxisMode === "y" ? p.y : p.x;
+    axisVals.push(axis);
+    const normAmp = (p.z - midZ) / rangeZ;
+    const clamped = Math.max(-1, Math.min(1, normAmp));
+    amps.push(clamped);
+  }
+
+  let minAxis = Infinity;
+  let maxAxis = -Infinity;
+  for (const v of axisVals) {
+    if (v < minAxis) minAxis = v;
+    if (v > maxAxis) maxAxis = v;
+  }
+
+  if (minAxis === maxAxis) {
+    const a = amps[0];
+    for (let i = 0; i < WAVETABLE_SIZE; i++) out[i] = a;
+    return out;
+  }
+
+  const idxs = axisVals.map((_, i) => i);
+  idxs.sort((a, b) => axisVals[a] - axisVals[b]);
+  const sortedAxis = idxs.map((i) => axisVals[i]);
+  const sortedAmp = idxs.map((i) => amps[i]);
+
+  let j = 0;
+  for (let i = 0; i < WAVETABLE_SIZE; i++) {
+    const t = i / (WAVETABLE_SIZE - 1);
+    const target = minAxis + t * (maxAxis - minAxis);
+
+    while (j < sortedAxis.length - 2 && sortedAxis[j + 1] < target) {
+      j++;
+    }
+
+    const a0 = sortedAxis[j];
+    const a1 = sortedAxis[Math.min(j + 1, sortedAxis.length - 1)];
+    const v0 = sortedAmp[j];
+    const v1 = sortedAmp[Math.min(j + 1, sortedAmp.length - 1)];
+    const denom = a1 - a0;
+    const u = denom === 0 ? 0 : (target - a0) / denom;
+    out[i] = v0 + (v1 - v0) * u;
+  }
+
+  return out;
+}
+
 function updateCollisionUI() {
   elSliceCount.textContent = String(sliceCount);
   elCollisionTotal.textContent = String(totalCollisions);
@@ -392,6 +501,95 @@ function updateCollisionUI() {
     row.appendChild(span);
     elCollisionList.appendChild(row);
   }
+}
+
+function updatePitchUI() {
+  if (!elPitchDisplay) return;
+  const freq = baseFrequency * Math.pow(2, semitoneOffset / 12);
+  elPitchDisplay.textContent = freq.toFixed(1) + " Hz";
+}
+
+function updateADSRUI() {
+  if (!elADSRAtk) return;
+  elADSRAtk.textContent = Math.round(adsr.attack * 1000) + " ms";
+  elADSRDec.textContent = Math.round(adsr.decay * 1000) + " ms";
+  elADSRSus.textContent = adsr.sustain.toFixed(2);
+  elADSRRel.textContent = Math.round(adsr.release * 1000) + " ms";
+}
+
+function initAudioIfNeeded() {
+  if (audioCtx) return;
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  if (!Ctor) {
+    if (elStatusBar) elStatusBar.textContent = "Web Audio API not supported.";
+    return;
+  }
+  audioCtx = new Ctor();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0.4;
+  masterGain.connect(audioCtx.destination);
+}
+
+function playSlice(index) {
+  if (!wavetables || !wavetables[index]) return;
+  initAudioIfNeeded();
+  if (!audioCtx || !masterGain) return;
+
+  const wav = wavetables[index];
+  const buffer = audioCtx.createBuffer(1, wav.length, audioCtx.sampleRate);
+  buffer.copyToChannel(wav, 0);
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = buffer;
+  src.loop = true;
+
+  const g = audioCtx.createGain();
+  g.gain.value = 0;
+  src.connect(g);
+  g.connect(masterGain);
+
+  const now = audioCtx.currentTime;
+  const freq = baseFrequency * Math.pow(2, semitoneOffset / 12);
+  src.playbackRate.value = freq / baseFrequency;
+
+  const attack = adsr.attack;
+  const decay = adsr.decay;
+  const sustain = adsr.sustain;
+  const release = adsr.release;
+  const sustainTime = 0.2;
+  const t0 = now;
+  const tA = t0 + attack;
+  const tD = tA + decay;
+  const tS = tD + sustainTime;
+  const tR = tS + release;
+
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(1, tA);
+  g.gain.linearRampToValueAtTime(sustain, tD);
+  g.gain.setValueAtTime(sustain, tS);
+  g.gain.linearRampToValueAtTime(0, tR);
+
+  src.start(t0);
+  src.stop(tR);
+
+  playingSlices.add(index);
+  setTimeout(() => {
+    playingSlices.delete(index);
+  }, (tR - t0) * 1000);
+}
+
+function changeSemitone(delta) {
+  semitoneOffset += delta;
+  updatePitchUI();
+}
+
+function changeADSR(part, delta) {
+  if (part === "attack" || part === "decay" || part === "release") {
+    adsr[part] = Math.max(0, adsr[part] + delta);
+  } else if (part === "sustain") {
+    adsr.sustain = Math.min(1, Math.max(0, adsr.sustain + delta));
+  }
+  updateADSRUI();
 }
 
 function keyPressed() {
@@ -411,5 +609,40 @@ function keyPressed() {
   } else if (key === "v" || key === "V") {
     viewMode = viewMode === "mesh" ? "wavetable" : "mesh";
     elViewStatus.textContent = viewMode === "mesh" ? "Facemesh" : "Wavetable";
+  } else if (key === "x" || key === "X") {
+    timeAxisMode = "x";
+    generateWavetables();
+    if (elStatusBar) elStatusBar.textContent = "Time axis: X (left → right)";
+  } else if (key === "y" || key === "Y") {
+    timeAxisMode = "y";
+    generateWavetables();
+    if (elStatusBar) elStatusBar.textContent = "Time axis: Y (top → bottom)";
+  } else if (keyCode >= 49 && keyCode <= 57 && keyIsDown(32)) {
+    // Space + 1..9
+    const idx = keyCode - 49;
+    if (idx < rawSlices.length) playSlice(idx);
+  } else if (key === "0" && keyIsDown(32)) {
+    // Space + 0 → 10th slice
+    if (rawSlices.length > 9) playSlice(9);
+  } else if (key === "-" || key === "_") {
+    changeSemitone(-1);
+  } else if (key === "+" || key === "=") {
+    changeSemitone(1);
+  } else if (key === "a") {
+    changeADSR("attack", -0.01);
+  } else if (key === "A") {
+    changeADSR("attack", 0.01);
+  } else if (key === "d") {
+    changeADSR("decay", -0.01);
+  } else if (key === "D") {
+    changeADSR("decay", 0.01);
+  } else if (key === "s") {
+    changeADSR("sustain", -0.05);
+  } else if (key === "S") {
+    changeADSR("sustain", 0.05);
+  } else if (key === "r") {
+    changeADSR("release", -0.02);
+  } else if (key === "R") {
+    changeADSR("release", 0.02);
   }
 }
