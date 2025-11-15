@@ -7,11 +7,11 @@
 
   <!-- Libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
-  <!-- MediaPipe Face Mesh with Face Geometry Module (legacy API - only one with true 3D mesh) -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
   <style>
     * {
@@ -237,6 +237,14 @@ Mouse wheel: Zoom
     </aside>
   </div>
 
+  <script src="facemesh.js"></script>
+  <script src="meshBuilder.js"></script>
+  <script src="meshSlicer.js"></script>
+  <script src="wavetable.js"></script>
+  <script src="audioEngine.js"></script>
+  <script src="visualization.js"></script>
+  <script src="uiControls.js"></script>
+  <script src="aiProcessor.js"></script>
   <script src="sketch.js"></script>
 </body>
 </html>
