@@ -7,8 +7,11 @@
 
   <!-- Libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
-  <!-- Note: p5.dom is deprecated in p5.js 1.0+, DOM functions are now in main library -->
-  <script src="https://unpkg.com/ml5@0.12.2/dist/ml5.min.js"></script>
+  <!-- MediaPipe Face Mesh with Face Geometry Module (legacy API - only one with true 3D mesh) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 
   <style>
     * {
@@ -146,7 +149,7 @@
         <h2>Capture</h2>
         <div class="panel-row">
           <span>Status</span>
-          <span id="capture-status" class="value">Loading model...</span>
+          <span id="capture-status" class="value">Loading MediaPipe...</span>
         </div>
         <div class="panel-row">
           <span>Mesh</span>
@@ -154,7 +157,11 @@
         </div>
         <div class="panel-row">
           <span>View</span>
-          <span id="view-status" class="value">Facemesh</span>
+          <span id="view-status" class="value">Face Geometry</span>
+        </div>
+        <div class="panel-row">
+          <span>3D Mode</span>
+          <span id="3d-mode-status" class="value">Stacked Curves</span>
         </div>
         <div style="font-size: 11px; margin-top: 4px; color: #c0c4e0;">
           Press <b>C</b> to freeze face. Press <b>Esc</b> to unfreeze.
@@ -215,9 +222,10 @@ C: Capture/freeze face
 Esc: Unfreeze (back to live)
 [: Decrease slices
 ]: Increase slices
-V: Toggle view mode
+V: Toggle view (Mesh/Wave)
+M: Cycle 3D mode (5 styles)
 X/Y: Time axis (X or Y)
-Space+1-0: Play slices
+1-9, 0: Play slices 1-10
 -/+: Pitch down/up
 a/A d/D s/S r/R: ADSR
 Mouse drag: Rotate camera
@@ -225,7 +233,7 @@ Mouse wheel: Zoom
         </div>
       </div>
 
-      <div id="status-bar">Webcam + facemesh starting...</div>
+      <div id="status-bar">Initializing MediaPipe Face Geometry Module...</div>
     </aside>
   </div>
 
