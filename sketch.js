@@ -32,7 +32,7 @@ function findMinMax(points, accessor) {
 // --- Global state ---
 let video;
 let faceMesh; // MediaPipe FaceMesh instance
-let camera; // MediaPipe Camera helper
+let mpCamera; // MediaPipe Camera helper (renamed to avoid conflict with p5.js camera())
 let currentFaceResults = null; // Latest detection results
 
 let liveGeometry = null; // Current face geometry (vertices + topology)
@@ -128,62 +128,99 @@ function initAIPromptDefault() {
   elAIPrompt.value = defaultPrompt;
 }
 
+let mediapipeInitialized = false; // Prevent multiple inits
+
 function initVideoAndFacemesh() {
+  if (mediapipeInitialized) {
+    console.log("Already initialized, skipping...");
+    return;
+  }
+  mediapipeInitialized = true;
+  
   elStatusBar.textContent = "Initializing MediaPipe Face Geometry...";
   
   // Create p5 video capture
   video = createCapture(VIDEO, () => {
     elStatusBar.textContent = "Webcam ready. Loading Face Geometry model...";
-    startMediaPipe();
+    // Give video time to initialize before starting MediaPipe
+    setTimeout(() => {
+      startMediaPipe();
+    }, 500);
   });
   
   video.size(640, 480);
   video.hide();
 }
 
-function startMediaPipe() {
-  // Initialize MediaPipe FaceMesh with Face Geometry Module
-  faceMesh = new FaceMesh({
-    locateFile: (file) => {
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
-    }
-  });
+async function startMediaPipe() {
+  // Prevent multiple initializations
+  if (faceMesh) {
+    console.log("MediaPipe already initialized");
+    return;
+  }
 
-  // CRITICAL: Enable Face Geometry for true 3D mesh (not just landmarks)
-  faceMesh.setOptions({
-    maxNumFaces: 1,
-    refineLandmarks: true,  // Better accuracy around eyes and lips
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5,
-    enableFaceGeometry: true  // ← THIS IS KEY: Provides metric 3D mesh
-  });
+  try {
+    // Initialize MediaPipe FaceMesh with Face Geometry Module
+    faceMesh = new FaceMesh({
+      locateFile: (file) => {
+        // MediaPipe will load files from its CDN
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+      }
+    });
 
-  // Handle results
-  faceMesh.onResults(onFaceResults);
+    // Set up result handler BEFORE setting options
+    faceMesh.onResults(onFaceResults);
 
-  // Use MediaPipe Camera helper for optimal frame handling
-  camera = new Camera(video.elt, {
-    onFrame: async () => {
-      await faceMesh.send({ image: video.elt });
-    },
-    width: 640,
-    height: 480
-  });
+    // CRITICAL: Enable Face Geometry for true 3D mesh (not just landmarks)
+    await faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: false,  // Disable for stability (can enable later)
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+      enableFaceGeometry: true  // ← THIS IS KEY: Provides metric 3D mesh
+    });
 
-  camera.start().then(() => {
-    elCaptureStatus.textContent = "Live tracking";
-    elMeshStatus.textContent = "0 faces";
-    elStatusBar.textContent = "✓ MediaPipe Face Geometry loaded. Press C to capture.";
     console.log("✓ MediaPipe Face Geometry Module initialized");
     console.log("  - 468 vertices in metric 3D space (cm)");
     console.log("  - Triangular mesh topology");
     console.log("  - UV texture coordinates");
     console.log("  - 4x4 pose transformation matrix");
-  }).catch((err) => {
+
+    // Initialize and start camera
+    await initCamera();
+
+  } catch (err) {
+    console.error("MediaPipe initialization error:", err);
+    elStatusBar.textContent = "⚠️ Failed to load MediaPipe. Check console.";
+    elCaptureStatus.textContent = "Model error";
+  }
+}
+
+async function initCamera() {
+  mpCamera = new Camera(video.elt, {
+    onFrame: async () => {
+      if (faceMesh && video.elt.readyState === video.elt.HAVE_ENOUGH_DATA) {
+        try {
+          await faceMesh.send({ image: video.elt });
+        } catch (err) {
+          console.error("Frame processing error:", err);
+        }
+      }
+    },
+    width: 640,
+    height: 480
+  });
+
+  try {
+    await mpCamera.start();
+    elCaptureStatus.textContent = "Live tracking";
+    elMeshStatus.textContent = "0 faces";
+    elStatusBar.textContent = "✓ MediaPipe ready. Show face and press C to capture.";
+  } catch (err) {
     console.error("Camera error:", err);
     elStatusBar.textContent = "⚠️ Webcam access denied. Please grant camera permission.";
     elCaptureStatus.textContent = "No camera";
-  });
+  }
 }
 
 // Handle MediaPipe face detection results
@@ -194,24 +231,104 @@ function onFaceResults(results) {
   const hasFace = results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0;
   elMeshStatus.textContent = hasFace ? "1 face" : "0 faces";
   
-  if (hasFace && results.multiFaceGeometry && results.multiFaceGeometry.length > 0) {
-    // Extract true 3D geometry
-    liveGeometry = extractFaceGeometry(results.multiFaceGeometry[0], results.multiFaceLandmarks[0]);
-    
-    // Debug log first detection
-    if (!window.facemeshDebugLogged) {
-      console.log("✓ First face with geometry detected!");
-      console.log("  Vertices:", liveGeometry.vertices.length);
-      console.log("  Sample vertex (metric cm):", liveGeometry.vertices[0]);
-      if (liveGeometry.vertices.length > 0) {
-        const zValues = liveGeometry.vertices.map(v => v.z);
-        console.log("  Z range (cm):", Math.min(...zValues).toFixed(2), "to", Math.max(...zValues).toFixed(2));
+  if (hasFace) {
+    // Check if Face Geometry is available
+    if (results.multiFaceGeometry && results.multiFaceGeometry.length > 0) {
+      // Extract true 3D geometry
+      try {
+        liveGeometry = extractFaceGeometry(results.multiFaceGeometry[0], results.multiFaceLandmarks[0]);
+        
+        // Debug log first detection
+        if (!window.facemeshDebugLogged) {
+          console.log("✓ First face with GEOMETRY detected!");
+          console.log("  Converted vertices:", liveGeometry.vertices.length);
+          console.log("  Triangle indices:", liveGeometry.indices.length);
+          console.log("  Has pose matrix:", liveGeometry.matrix !== null);
+          window.facemeshDebugLogged = true;
+        }
+      } catch (err) {
+        console.error("Geometry extraction error:", err);
+        // Fallback: use landmarks if geometry fails
+        liveGeometry = createGeometryFromLandmarks(results.multiFaceLandmarks[0]);
       }
-      window.facemeshDebugLogged = true;
+    } else {
+      // Face Geometry not available - use landmarks as fallback
+      if (!window.geometryWarningShown) {
+        console.warn("⚠️ Face Geometry not available - using landmarks only");
+        console.warn("   This may happen if enableFaceGeometry failed to load");
+        window.geometryWarningShown = true;
+      }
+      liveGeometry = createGeometryFromLandmarks(results.multiFaceLandmarks[0]);
     }
   } else {
     liveGeometry = null;
   }
+}
+
+// Fallback: Create geometry structure from landmarks (if Face Geometry unavailable)
+function createGeometryFromLandmarks(landmarks) {
+  const vertices = [];
+  
+  // MediaPipe landmarks are ALREADY normalized (0-1 range)
+  // We need to convert them to 3D space coordinates
+  
+  // First pass: collect all points
+  for (let i = 0; i < landmarks.length; i++) {
+    const lm = landmarks[i];
+    // MediaPipe: x,y in [0,1], z is relative depth
+    vertices.push({
+      x: lm.x,
+      y: lm.y,
+      z: lm.z || 0
+    });
+  }
+  
+  // Find center and depth range for proper scaling
+  let cx = 0, cy = 0, cz = 0;
+  for (const v of vertices) {
+    cx += v.x;
+    cy += v.y;
+    cz += v.z;
+  }
+  cx /= vertices.length;
+  cy /= vertices.length;
+  cz /= vertices.length;
+  
+  // Find Z range for proper depth scaling
+  let zmin = Infinity, zmax = -Infinity;
+  for (const v of vertices) {
+    if (v.z < zmin) zmin = v.z;
+    if (v.z > zmax) zmax = v.z;
+  }
+  const zRange = (zmax - zmin) || 1;
+  
+  // Convert from normalized screen space to 3D world space
+  const converted = [];
+  for (const v of vertices) {
+    converted.push({
+      x: (v.x - cx) * 2.0,  // Center and scale to ~[-1, 1]
+      y: -(v.y - cy) * 2.0,  // Flip Y and scale
+      z: (v.z - cz) / zRange * 0.5  // Scale depth proportionally
+    });
+  }
+  
+  // Debug first conversion
+  if (!window.landmarkConversionLogged) {
+    console.log("✓ Landmark conversion (fallback mode):");
+    console.log("  Input (normalized):", vertices[0]);
+    console.log("  Output (3D space):", converted[0]);
+    console.log("  Center:", {x: cx.toFixed(3), y: cy.toFixed(3), z: cz.toFixed(3)});
+    console.log("  Z range:", zRange.toFixed(3));
+    window.landmarkConversionLogged = true;
+  }
+  
+  return {
+    vertices: converted,
+    indices: [],  // No topology without Face Geometry
+    matrix: null,  // No matrix without Face Geometry
+    rawVertices: vertices,
+    landmarks: landmarks
+  };
 }
 
 // Extract true 3D geometry from MediaPipe Face Geometry Module
@@ -219,7 +336,7 @@ function onFaceResults(results) {
 function extractFaceGeometry(faceGeometry, landmarks) {
   const mesh = faceGeometry.getMesh();
   
-  // Get vertex buffer (XYZ positions in metric space - centimeters!)
+  // Get vertex buffer (XYZ positions)
   const vertexBuffer = mesh.getVertexBufferList();
   const vertices = [];
   
@@ -240,17 +357,31 @@ function extractFaceGeometry(faceGeometry, landmarks) {
   const poseMatrix = faceGeometry.getPoseTransformMatrix();
   const matrix = poseMatrix ? poseMatrix.getPackedDataList() : null;
   
-  // Normalize coordinates for consistent visualization
-  // MediaPipe geometry is already centered and scaled appropriately
-  // We just need to flip Y for p5.js coordinate system
+  // Check actual coordinate range BEFORE normalization
+  if (!window.geometryRawLogged && vertices.length > 0) {
+    const xVals = vertices.map(v => v.x);
+    const yVals = vertices.map(v => v.y);
+    const zVals = vertices.map(v => v.z);
+    console.log("📊 RAW geometry data from MediaPipe:");
+    console.log("  Vertices:", vertices.length);
+    console.log("  X range:", Math.min(...xVals).toFixed(3), "to", Math.max(...xVals).toFixed(3), "cm");
+    console.log("  Y range:", Math.min(...yVals).toFixed(3), "to", Math.max(...yVals).toFixed(3), "cm");
+    console.log("  Z range:", Math.min(...zVals).toFixed(3), "to", Math.max(...zVals).toFixed(3), "cm");
+    console.log("  (Z+ = away from camera, will be flipped for display)");
+    console.log("  Sample raw vertex:", vertices[0]);
+    window.geometryRawLogged = true;
+  }
+  
+  // Normalize metric coordinates (cm) to display coordinates [-1, 1]
+  // This properly scales and centers the face for rendering
   const normalized = normalizeGeometry(vertices);
   
   return {
     vertices: normalized,
     indices: indices,
     matrix: matrix,
-    rawVertices: vertices, // Keep original metric coordinates
-    landmarks: landmarks   // Keep normalized landmarks for reference
+    rawVertices: vertices, // Keep original metric cm coordinates
+    landmarks: landmarks   // Keep landmarks for reference
   };
 }
 
@@ -286,12 +417,13 @@ function normalizeGeometry(vertices) {
   const scale = 2.0 / Math.max(width, height, depth);
   
   // Normalize and flip Y (MediaPipe Y+ is down, p5.js Y+ is up)
+  // Also flip Z so the face points TOWARDS us (camera view)
   const normalized = [];
   for (const v of vertices) {
     normalized.push({
       x: (v.x - cx) * scale,
-      y: -(v.y - cy) * scale,  // Flip Y axis
-      z: (v.z - cz) * scale
+      y: -(v.y - cy) * scale,  // Flip Y axis (MediaPipe down = p5.js up)
+      z: -(v.z - cz) * scale    // Flip Z axis (face towards camera, not away)
     });
   }
   
@@ -300,6 +432,23 @@ function normalizeGeometry(vertices) {
 
 function draw() {
   background(5, 6, 10);
+  
+  // Show video preview in corner (2D, no transformations)
+  if (viewMode === "mesh" && video && video.loadedmetadata) {
+    push();
+    // Draw in 2D mode (top-left corner)
+    resetMatrix();
+    camera(0, 0, (height/2) / tan(PI/6), 0, 0, 0, 0, 1, 0);
+    ortho(-width/2, width/2, -height/2, height/2, 0, 1000);
+    
+    translate(-width/2 + 160, -height/2 + 120, 0);
+    noStroke();
+    texture(video);
+    plane(320, 240);
+    pop();
+  }
+  
+  // 3D view with orbit controls
   orbitControl();
 
   // Soft light
@@ -307,9 +456,9 @@ function draw() {
   ambientLight(40);
 
   push();
-  // Uniform scale; tie to video width so mesh and video are similar physical size
-  const baseScale = video && video.width ? video.width * 0.5 : 200;
-  scale(baseScale, baseScale, baseScale);
+  // Scale to make face visible (normalized coords are in [-1,1] range)
+  const baseScale = min(width, height) * 0.35;
+  scale(baseScale);
 
   if (viewMode === "mesh") {
     renderMeshView();
@@ -318,17 +467,6 @@ function draw() {
   }
 
   pop();
-
-  // Draw small video preview in top-left corner (only in mesh view)
-  if (viewMode === "mesh" && video && video.loadedmetadata) {
-    push();
-    resetMatrix();
-    translate(-width / 2 + 90, -height / 2 + 70, 0);
-    noStroke();
-    texture(video);
-    plane(video.width, video.height);
-    pop();
-  }
 }
 
 function renderMeshView() {
