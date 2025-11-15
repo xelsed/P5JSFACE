@@ -7,11 +7,11 @@
 
   <!-- Libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
-  <!-- MediaPipe Face Mesh with Face Geometry Module (legacy API - only one with true 3D mesh) -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.4.1675469240/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils@0.4.1675469240/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.4.1675469240/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559614/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 
   <style>
     * {
@@ -169,18 +169,14 @@
       </div>
 
       <div class="panel-section">
-        <h2>Slices & Collisions</h2>
+        <h2>Slices</h2>
         <div class="panel-row">
           <span>Slices</span>
           <span id="slice-count" class="value">0</span>
         </div>
-        <div class="panel-row">
-          <span>Total collisions</span>
-          <span id="collision-total" class="value">0</span>
-        </div>
-        <div id="collision-list"></div>
+        <div id="slice-detail" style="font-size: 11px; line-height: 1.45; color: #c0c4e0; max-height: 180px; overflow-y: auto;"></div>
         <div style="font-size: 11px; margin-top: 4px; color: #c0c4e0;">
-          Adjust slices with <b>[</b> and <b>]</b> and watch per-slice collisions.
+          Adjust slices with <b>[</b> and <b>]</b> to rescan the mesh with evenly spaced planes.
         </div>
       </div>
 
@@ -237,6 +233,14 @@ Mouse wheel: Zoom
     </aside>
   </div>
 
+  <script src="facemesh.js"></script>
+  <script src="meshBuilder.js"></script>
+  <script src="meshSlicer.js"></script>
+  <script src="wavetable.js"></script>
+  <script src="audioEngine.js"></script>
+  <script src="visualization.js"></script>
+  <script src="uiControls.js"></script>
+  <script src="aiProcessor.js"></script>
   <script src="sketch.js"></script>
 </body>
 </html>
