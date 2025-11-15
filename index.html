@@ -7,7 +7,7 @@
 
   <!-- Libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/addons/p5.dom.min.js"></script>
+  <!-- Note: p5.dom is deprecated in p5.js 1.0+, DOM functions are now in main library -->
   <script src="https://unpkg.com/ml5@0.12.2/dist/ml5.min.js"></script>
 
   <style>
@@ -157,7 +157,7 @@
           <span id="view-status" class="value">Facemesh</span>
         </div>
         <div style="font-size: 11px; margin-top: 4px; color: #c0c4e0;">
-          Press <b>C</b> to capture / freeze current face mesh.
+          Press <b>C</b> to freeze face. Press <b>Esc</b> to unfreeze.
         </div>
       </div>
 
@@ -197,7 +197,7 @@
       </div>
 
       <div class="panel-section">
-        <h2>Audio (coming next)</h2>
+        <h2>Audio Playback</h2>
         <div class="panel-row">
           <span>Pitch</span>
           <span id="pitch-display" class="value">-</span>
@@ -211,13 +211,17 @@
       <div class="panel-section">
         <h2>Shortcuts</h2>
         <div id="shortcut-list">
-C: Capture face
+C: Capture/freeze face
+Esc: Unfreeze (back to live)
 [: Decrease slices
 ]: Increase slices
 V: Toggle view mode
-(Soon) Space+1-0: Play slices
-(Soon) -/+: Pitch down/up
-(Soon) A/D/S/R (+Shift): ADSR
+X/Y: Time axis (X or Y)
+Space+1-0: Play slices
+-/+: Pitch down/up
+a/A d/D s/S r/R: ADSR
+Mouse drag: Rotate camera
+Mouse wheel: Zoom
         </div>
       </div>
 

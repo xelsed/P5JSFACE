@@ -1,3 +1,28 @@
+// ============================================================================
+// FACE-TO-WAVETABLE 3D SYNTHESIZER
+// ============================================================================
+// Architecture:
+//   1. Facemesh tracking (ml5.js) → stabilized 3D point cloud
+//   2. Capture (C key) → freeze mesh geometry
+//   3. Horizontal slicing → Y-bands across face (mouth-aligned)
+//   4. Collision detection → report multi-valued Z at same X
+//   5. Wavetable generation → X or Y time-axis, Z → amplitude
+//   6. Web Audio playback → per-slice oscillators with ADSR
+//   7. 3D visualization → mesh view + wavetable view
+// ============================================================================
+
+// --- Utility Functions ---
+function findMinMax(points, accessor) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const p of points) {
+    const val = accessor(p);
+    if (val < min) min = val;
+    if (val > max) max = val;
+  }
+  return { min, max };
+}
+
 // --- Global state ---
 let video;
 let facemeshModel;
@@ -99,6 +124,16 @@ function initVideoAndFacemesh() {
   video = createCapture(VIDEO, () => {
     elStatusBar.textContent = "Webcam ready. Loading facemesh...";
   });
+  
+  // Check if video loaded successfully after a short delay
+  setTimeout(() => {
+    if (!video || !video.elt || !video.elt.srcObject) {
+      console.error("Webcam access denied or failed");
+      elStatusBar.textContent = "⚠️ Webcam access denied. Please grant camera permission.";
+      elCaptureStatus.textContent = "No camera";
+    }
+  }, 2000);
+  
   video.size(320, 240);
   video.hide();
 
@@ -106,6 +141,11 @@ function initVideoAndFacemesh() {
     elCaptureStatus.textContent = "Live tracking";
     elMeshStatus.textContent = "0 faces";
     elStatusBar.textContent = "Facemesh model loaded. Look at the camera and press C to capture.";
+  }, (err) => {
+    // Error callback for model loading failure
+    console.error("Facemesh model error:", err);
+    elStatusBar.textContent = "⚠️ Failed to load facemesh model. Check your internet connection.";
+    elCaptureStatus.textContent = "Model error";
   });
 
   facemeshModel.on("predict", (results) => {
@@ -202,13 +242,13 @@ function draw() {
   if (viewMode === "mesh") {
     renderMeshView();
   } else {
-    renderWavetableViewPlaceholder();
+    renderWavetableView();
   }
 
   pop();
 
   // Draw small video preview in top-left corner as a 2D overlay
-  if (video) {
+  if (video && video.loadedmetadata) {
     push();
     resetMatrix();
     translate(-width / 2 + 90, -height / 2 + 70, 0);
@@ -220,8 +260,8 @@ function draw() {
 }
 
 function renderMeshView() {
-  // Live tracking as ghosted background
-  if (stabilizedLivePoints && stabilizedLivePoints.length > 0) {
+  // Live tracking as ghosted background (only show if NOT frozen)
+  if (!frozenMesh && stabilizedLivePoints && stabilizedLivePoints.length > 0) {
     stroke(255, 240, 0, 220);
     strokeWeight(0.012);
     noFill();
@@ -277,7 +317,7 @@ function drawSliceLines() {
   }
 }
 
-function renderWavetableViewPlaceholder() {
+function renderWavetableView() {
   if (!wavetables || wavetables.length === 0) return;
 
   const sliceSpacing = 0.18;
@@ -289,10 +329,23 @@ function renderWavetableViewPlaceholder() {
 
     const y = (i - (wavetables.length - 1) / 2) * sliceSpacing;
     const isPlaying = playingSlices.has(i);
+    const isMouthSlice = mouthSliceIndex !== null && i === mouthSliceIndex;
 
-    const col = isPlaying ? [120, 255, 180] : [180, 200, 255];
+    let col;
+    let weight;
+    if (isPlaying) {
+      col = [120, 255, 180]; // Bright green for playing
+      weight = 0.012;
+    } else if (isMouthSlice) {
+      col = [80, 180, 255]; // Blue for mouth-aligned slice
+      weight = 0.009;
+    } else {
+      col = [180, 200, 255]; // Default light blue
+      weight = 0.006;
+    }
+    
     stroke(col[0], col[1], col[2]);
-    strokeWeight(isPlaying ? 0.012 : 0.006);
+    strokeWeight(weight);
     noFill();
 
     beginShape();
@@ -334,7 +387,8 @@ function recomputeSlices() {
   const upperLipIndex = 13;
   const lowerLipIndex = 14;
   mouthSliceIndex = null;
-  if (frozenMesh[upperLipIndex] && frozenMesh[lowerLipIndex]) {
+  if (frozenMesh.length > Math.max(upperLipIndex, lowerLipIndex) && 
+      frozenMesh[upperLipIndex] && frozenMesh[lowerLipIndex]) {
     const mouthY = (frozenMesh[upperLipIndex].y + frozenMesh[lowerLipIndex].y) * 0.5;
     const anchorIndex = Math.floor(sliceCount / 2);
     sliceMinY = mouthY - sliceH * (anchorIndex + 0.5);
@@ -455,7 +509,7 @@ function generateWavetableForSlice(points, minZ, maxZ) {
   }
 
   if (minAxis === maxAxis) {
-    const a = amps[0];
+    const a = amps.length > 0 ? amps[0] : 0;
     for (let i = 0; i < WAVETABLE_SIZE; i++) out[i] = a;
     return out;
   }
@@ -597,9 +651,20 @@ function keyPressed() {
     if (stabilizedLivePoints && stabilizedLivePoints.length > 0) {
       frozenMesh = stabilizedLivePoints.map((p) => ({ x: p.x, y: p.y, z: p.z }));
       elCaptureStatus.textContent = "Frozen";
-      elStatusBar.textContent = "Frozen mesh captured. Adjust slices with [ and ]";
+      elStatusBar.textContent = "Frozen mesh captured. Press R to reset, [ ] to adjust slices";
       recomputeSlices();
     }
+  } else if (key === "Escape") {
+    // Reset/unfreeze - go back to live tracking
+    frozenMesh = null;
+    rawSlices = [];
+    wavetables = [];
+    sliceCollisionCounts = [];
+    totalCollisions = 0;
+    mouthSliceIndex = null;
+    elCaptureStatus.textContent = "Live tracking";
+    elStatusBar.textContent = "Mesh unfrozen. Press C to capture again.";
+    updateCollisionUI();
   } else if (key === "[") {
     sliceCount = Math.max(2, sliceCount - 1);
     if (frozenMesh) recomputeSlices();
@@ -620,10 +685,10 @@ function keyPressed() {
   } else if (keyCode >= 49 && keyCode <= 57 && keyIsDown(32)) {
     // Space + 1..9
     const idx = keyCode - 49;
-    if (idx < rawSlices.length) playSlice(idx);
+    if (idx < wavetables.length) playSlice(idx);
   } else if (key === "0" && keyIsDown(32)) {
     // Space + 0 → 10th slice
-    if (rawSlices.length > 9) playSlice(9);
+    if (wavetables.length > 9) playSlice(9);
   } else if (key === "-" || key === "_") {
     changeSemitone(-1);
   } else if (key === "+" || key === "=") {
@@ -646,3 +711,28 @@ function keyPressed() {
     changeADSR("release", 0.02);
   }
 }
+
+// ============================================================================
+// OPTIONAL FEATURES (Not Yet Implemented)
+// ============================================================================
+// The following UI elements exist but are not yet wired up:
+//
+// 1. AI Smoothing Integration (elAIButton, elOpenAIKey, elAIPrompt):
+//    - Would send wavetable data to OpenAI API for AI-based smoothing
+//    - Requires OpenAI API key and prompt configuration
+//
+// 2. Processing Method Dropdown (elSmoothingMethod):
+//    - "None" = raw geometry data (not recommended)
+//    - "Basic interpolation" = current implementation (default)
+//    - "AI smoothing" = would trigger OpenAI processing
+//
+// 3. Progress Indicators:
+//    - Visual feedback during wavetable generation
+//    - Progress bar for AI processing
+//
+// To implement AI smoothing:
+//    - Add event listener to elAIButton
+//    - Send rawSlices data to OpenAI API
+//    - Parse response and update wavetables array
+//    - Show progress in elAIStatus
+// ============================================================================
